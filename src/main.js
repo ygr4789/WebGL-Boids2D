@@ -3,48 +3,132 @@
 function main() {
   // Get A WebGL context
   /** @type {HTMLCanvasElement} */
-  var canvas = document.querySelector("#canvas");
-  var gl = canvas.getContext("webgl");
+  let canvas = document.querySelector("#canvas");
+  let gl = canvas.getContext("webgl");
   if (!gl) {
     return;
   }
+  webglUtils.resizeCanvasToDisplaySize(gl.canvas);
+  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 
-  let objects = [];
-  let numObjects = 1000;
-  let avoidDistance = 20;
-  let sightDistance = 75;
-  let margin = 200;
-  // let factor1 = 5.0;
-  // let factor2 = 50.0;
-  // let factor3 = 1.0;
-  let factor1 = 5; // centering
-  let factor2 = 10.0; // avoid
-  let factor3 = 5.0; // align
-  let factor4 = 2000;
-  let vlim = 1000;
+  const shaderProgram = webglUtils.createProgramFromScripts(gl, ["vertex-shader-2d", "fragment-shader-2d"]);
+  const positionAttributeLocation = gl.getAttribLocation(shaderProgram, "a_position");
+  const resolutionUniformLocation = gl.getUniformLocation(shaderProgram, "u_resolution");
+  const colorUniformLocation = gl.getUniformLocation(shaderProgram, "u_color");
+  const translationLocation = gl.getUniformLocation(shaderProgram, "u_translation");
+  const rotationLocation = gl.getUniformLocation(shaderProgram, "u_rotation");
+  const positionBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+
+  gl.useProgram(shaderProgram);
+  gl.enableVertexAttribArray(positionAttributeLocation);
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  const size = 2;
+  const type = gl.FLOAT;
+  const normalize = false;
+  const stride = 0;
+  const offset = 0;
+  gl.vertexAttribPointer(positionAttributeLocation, size, type, normalize, stride, offset);
+  gl.uniform2f(resolutionUniformLocation, gl.canvas.width, gl.canvas.height);
+
+  let boids = [];
+  const numboids = 1000;
+  const avoidDistance = 20;
+  const sightDistance = 75;
+  const margin = 200;
+  const bounding = 1000;
+  const factor = [
+    5.0, // centering
+    10.0, // keep distance
+    5.0, // match
+  ];
+  const vlim = 500;
   let Xmin, Xmax, Ymin, Ymax;
 
-  function object() {
+  function Boid() {
     this.x = Math.random() * (gl.canvas.width - 2 * margin) + margin;
     this.y = Math.random() * (gl.canvas.height - 2 * margin) + margin;
-    this.vy = (Math.random() - 0.5) * 700;
-    this.vx = (Math.random() - 0.5) * 700;
+    this.vy = (Math.random() - 0.5) * 600;
+    this.vx = (Math.random() - 0.5) * 600;
     this.ax = 0;
     this.ay = 0;
     this.color = [1, 0, 0, 1];
     this.update = function (dt) {
       this.vx += this.ax * dt;
       this.vy += this.ay * dt;
+      limitingVelocity(this);
       this.x += this.vx * dt;
       this.y += this.vy * dt;
     };
   }
 
   function initBoids() {
-    for (let i = 0; i < numObjects; i++) {
-      objects.push(new object());
+    for (let i = 0; i < numboids; i++) {
+      boids.push(new Boid());
     }
   }
+  function initBounds() {
+    Xmin = Ymin = margin;
+    Xmax = gl.canvas.width - margin;
+    Ymax = gl.canvas.height - margin;
+  }
+
+  const boidRules = [
+    function (boid) {
+      // rule1
+      let ret = [0, 0];
+      let perceivedCentreX = 0;
+      let perceivedCentreY = 0;
+      let countNN = 0;
+      for (let boid_ of boids) {
+        if (boid === boid_) continue;
+        if (distOfBoids(boid, boid_) > sightDistance) continue;
+        countNN++;
+        perceivedCentreX += boid_.x;
+        perceivedCentreY += boid_.y;
+      }
+      if (countNN != 0) {
+        perceivedCentreX /= countNN;
+        perceivedCentreY /= countNN;
+        ret[0] = perceivedCentreX - boid.x;
+        ret[1] = perceivedCentreY - boid.y;
+      }
+      return ret;
+    },
+    function (boid) {
+      // rule2
+      let ret = [0, 0];
+      for (let boid_ of boids) {
+        if (boid === boid_) continue;
+        let dist = distOfBoids(boid, boid_);
+        if (dist > avoidDistance) continue;
+        ret[0] -= boid_.x - boid.x;
+        ret[1] -= boid_.y - boid.y;
+      }
+      return ret;
+    },
+    function (boid) {
+      // rule3
+      let ret = [0, 0];
+      let perceivedVelocityX = 0;
+      let perceivedVelocityY = 0;
+      let countNN = 0;
+      for (let boid_ of boids) {
+        if (boid === boid_) continue;
+        if (distOfBoids(boid, boid_) > sightDistance) continue;
+        countNN++;
+        perceivedVelocityX += boid_.vx;
+        perceivedVelocityY += boid_.vy;
+      }
+      if (countNN != 0) {
+        perceivedVelocityX /= countNN;
+        perceivedVelocityY /= countNN;
+        ret[0] = perceivedVelocityX - boid.vx;
+        ret[1] = perceivedVelocityY - boid.vy;
+      }
+      return ret;
+    },
+  ];
 
   function distOfBoids(b1, b2) {
     return Math.sqrt(Math.pow(b1.x - b2.x, 2) + Math.pow(b1.y - b2.y, 2));
@@ -52,164 +136,84 @@ function main() {
   function normOfVector(x, y) {
     return Math.sqrt(Math.pow(x, 2) + Math.pow(y, 2));
   }
-  function updateBound() {
-    Xmin = Ymin = margin;
-    Xmax = gl.canvas.width - margin;
-    Ymax = gl.canvas.height - margin;
+
+  function applyAllRules(boid) {
+    let acc = [0, 0];
+    boidRules.forEach((rule, index) => {
+      let acc_ = rule(boid);
+      acc[0] += acc_[0] * factor[index];
+      acc[1] += acc_[1] * factor[index];
+    });
+    boid.ax = acc[0];
+    boid.ay = acc[1];
   }
 
-  function updateBoidsVelocity(dt) {
-    for (let i = 0; i < numObjects; i++) {
-      var ax1 = 0,
-        ax2 = 0,
-        ax3 = 0;
-      var ay1 = 0,
-        ay2 = 0,
-        ay3 = 0;
+  function boundingPosition(boid) {
+    if (boid.x < Xmin) boid.ax = bounding;
+    if (boid.x > Xmax) boid.ax = -bounding;
+    if (boid.y < Ymin) boid.ay = bounding;
+    if (boid.y > Ymax) boid.ay = -bounding;
+  }
 
-      let meanPosX = 0;
-      let meanPosY = 0;
-      let meanVelX = 0;
-      let meanVelY = 0;
-
-      let countNN = 0;
-      for (let j = 0; j < numObjects; j++) {
-        if (i == j) continue;
-        var dist = distOfBoids(objects[i], objects[j]);
-        if (dist > sightDistance) continue;
-        countNN++;
-        meanPosX += objects[j].x;
-        meanPosY += objects[j].y;
-        meanVelX += objects[j].vx;
-        meanVelY += objects[j].vy;
-      }
-      if (countNN != 0) {
-        meanPosX /= countNN;
-        meanPosY /= countNN;
-        meanVelX /= countNN;
-        meanVelY /= countNN;
-        ax1 = (meanPosX - objects[i].x) * factor1;
-        ay1 = (meanPosY - objects[i].y) * factor1;
-        ax3 = (meanVelX - objects[i].vx) * factor3;
-        ay3 = (meanVelY - objects[i].vy) * factor3;
-      }
-
-      for (let j = 0; j < numObjects; j++) {
-        if (i == j) continue;
-        var dist = distOfBoids(objects[i], objects[j]);
-        if (dist > avoidDistance) continue;
-        var dx = objects[j].x - objects[i].x;
-        var dy = objects[j].y - objects[i].y;
-        // ax2 -= (dx / dist) * ((avoidDistance - dist) / avoidDistance) * factor2;
-        // ay2 -= (dy / dist) * ((avoidDistance - dist) / avoidDistance) * factor2;
-        ax2 -= dx * factor2;
-        ay2 -= dy * factor2;
-      }
-
-      objects[i].ax = ax1 + ax2 + ax3;
-      objects[i].ay = ay1 + ay2 + ay3;
-
-      var vnorm = normOfVector(objects[i].vx, objects[i].vy);
-      if (vnorm > vlim) {
-        objects[i].vx = (objects[i].vx / vnorm) * vlim;
-        objects[i].vy = (objects[i].vy / vnorm) * vlim;
-      }
-
-      if (objects[i].x < Xmin) objects[i].ax = factor4;
-      else if (objects[i].x > Xmax) objects[i].ax = -factor4;
-      else if (objects[i].y < Ymin) objects[i].ay = factor4;
-      else if (objects[i].y > Ymax) objects[i].ay = -factor4;
-      
-      objects[i].update(dt);
+  function limitingVelocity(boid) {
+    let vnorm = normOfVector(boid.vx, boid.vy);
+    if (vnorm > vlim) {
+      boid.vx = boid.vx * (vlim / vnorm);
+      boid.vy = boid.vy * (vlim / vnorm);
     }
   }
 
-  // setup GLSL program
-  var program = webglUtils.createProgramFromScripts(gl, ["vertex-shader-2d", "fragment-shader-2d"]);
-  // look up where the datas need to go.
-  var positionAttributeLocation = gl.getAttribLocation(program, "a_position");
-  var resolutionUniformLocation = gl.getUniformLocation(program, "u_resolution");
-  var colorUniformLocation = gl.getUniformLocation(program, "u_color");
-  var translationLocation = gl.getUniformLocation(program, "u_translation");
-  var rotationLocation = gl.getUniformLocation(program, "u_rotation");
-  // Create a buffer to put three 2d clip space points in
-  var positionBuffer = gl.createBuffer();
-  // Bind it to ARRAY_BUFFER (think of it as ARRAY_BUFFER = positionBuffer)
-  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  webglUtils.resizeCanvasToDisplaySize(gl.canvas);
-  // Tell WebGL how to convert from clip space to pixels
-  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-  // Tell it to use our program (pair of shaders)
-  gl.useProgram(program);
-  // Turn on the attribute
-  gl.enableVertexAttribArray(positionAttributeLocation);
-  // Bind the position buffer.
-  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  // Tell the attribute how to get data out of positionBuffer (ARRAY_BUFFER)
-  var size = 2; // 2 components per iteration
-  var type = gl.FLOAT; // the data is 32bit floats
-  var normalize = false; // don't normalize the data
-  var stride = 0; // 0 = move forward size * sizeof(type) each iteration to get the next position
-  var offset = 0; // start at the beginning of the buffer
-  gl.vertexAttribPointer(positionAttributeLocation, size, type, normalize, stride, offset);
-  // set the resolution
-  gl.uniform2f(resolutionUniformLocation, gl.canvas.width, gl.canvas.height);
+  function updateBoidsVelocity(dt) {
+    for (let boid of boids) {
+      applyAllRules(boid);
+      boundingPosition(boid);
+      limitingVelocity(boid);
+      boid.update(dt);
+    }
+  }
 
-  let prev = 0;
-  updateBound();
+  initBounds();
   initBoids();
 
-  requestAnimationFrame(drawScene);
-  // webglLessonsUI.setupSlider("#x", {slide: updatePosition(0), max: gl.canvas.width });
-  // webglLessonsUI.setupSlider("#y", {slide: updatePosition(1), max: gl.canvas.height});
-  function drawScene(curr) {
-    curr *= 0.001;
-    let timeDiff = curr - prev;
-    prev = curr;
+  let then = 0;
+  function drawScene(now) {
+    now *= 0.001;
+    let timeDiff = now - then;
+    then = now;
 
     // Clear the canvas
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    for (let i = 0; i < numObjects; i++) {
-      setRectangle(gl);
+    for (let boid of boids) {
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-5, -5, 0, 10, 5, -5]), gl.STATIC_DRAW);
 
-      gl.uniform4fv(colorUniformLocation, objects[i].color);
+      gl.uniform4fv(colorUniformLocation, boid.color);
 
-      var translation = [0, 0];
-      translation[0] = objects[i].x;
-      translation[1] = objects[i].y;
+      let translation = [0, 0];
+      translation[0] = boid.x;
+      translation[1] = boid.y;
       gl.uniform2fv(translationLocation, translation);
 
-      var rotation = [0, 1];
-      var vel = normOfVector(objects[i].vx, objects[i].vy);
-      if (vel != 0) {
-        rotation[0] = objects[i].vx / vel;
-        rotation[1] = objects[i].vy / vel;
+      let rotation = [0, 1];
+      if (boid.x !== 0 || boid.y !== 0) {
+        let vnorm = normOfVector(boid.vx, boid.vy);
+        rotation[0] = boid.vx / vnorm;
+        rotation[1] = boid.vy / vnorm;
       }
       gl.uniform2fv(rotationLocation, rotation);
 
       // Draw the rectangle.
-      var primitiveType = gl.TRIANGLES;
-      var offset = 0;
-      var count = 3;
+      let primitiveType = gl.TRIANGLES;
+      let offset = 0;
+      let count = 3;
       gl.drawArrays(primitiveType, offset, count);
     }
 
-    updateBound();
     updateBoidsVelocity(timeDiff);
     requestAnimationFrame(drawScene);
   }
-}
-
-// Returns a random integer from 0 to range - 1.
-function randomInt(range) {
-  return Math.floor(Math.random() * range);
-}
-
-// Fill the buffer with the values that define a rectangle.
-function setRectangle(gl) {
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-5, -5, 0, 10, 5, -5]), gl.STATIC_DRAW);
+  requestAnimationFrame(drawScene);
 }
 
 main();
