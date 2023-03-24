@@ -10,28 +10,33 @@ function main() {
   }
 
   let objects = [];
-  let numObjects = 100;
+  let numObjects = 1000;
   let avoidDistance = 20;
   let sightDistance = 75;
   let margin = 200;
-  let frame = 60;
-  let factor1 = 0.005 * frame;
-  let factor2 = 0.05 * frame;
-  let factor3 = 0.05 * frame;
-  let vlim = 15 * frame;
+  // let factor1 = 5.0;
+  // let factor2 = 50.0;
+  // let factor3 = 1.0;
+  let factor1 = 5; // centering
+  let factor2 = 10.0; // avoid
+  let factor3 = 5.0; // align
+  let factor4 = 2000;
+  let vlim = 1000;
   let Xmin, Xmax, Ymin, Ymax;
 
   function object() {
-    this.x = Math.random() * gl.canvas.width;
-    this.y = Math.random() * gl.canvas.height;
-    this.vy = (Math.random() - 0.5) * 10 * frame;
-    this.vx = (Math.random() - 0.5) * 10 * frame;
+    this.x = Math.random() * (gl.canvas.width - 2 * margin) + margin;
+    this.y = Math.random() * (gl.canvas.height - 2 * margin) + margin;
+    this.vy = (Math.random() - 0.5) * 700;
+    this.vx = (Math.random() - 0.5) * 700;
+    this.ax = 0;
+    this.ay = 0;
     this.color = [1, 0, 0, 1];
     this.update = function (dt) {
-      this.x += this.vx / frame;
-      this.y += this.vy / frame;
-      // this.x += this.vx * dt;
-      // this.y += this.vy * dt;
+      this.vx += this.ax * dt;
+      this.vy += this.ay * dt;
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
     };
   }
 
@@ -53,10 +58,14 @@ function main() {
     Ymax = gl.canvas.height - margin;
   }
 
-  function updateBoidsVelocity() {
+  function updateBoidsVelocity(dt) {
     for (let i = 0; i < numObjects; i++) {
-      var ax1 = 0, ax2 = 0, ax3  =0;
-      var ay1 = 0, ay2 = 0, ay3  =0;
+      var ax1 = 0,
+        ax2 = 0,
+        ax3 = 0;
+      var ay1 = 0,
+        ay2 = 0,
+        ay3 = 0;
 
       let meanPosX = 0;
       let meanPosY = 0;
@@ -91,14 +100,14 @@ function main() {
         if (dist > avoidDistance) continue;
         var dx = objects[j].x - objects[i].x;
         var dy = objects[j].y - objects[i].y;
-        ax2 -= (dx / dist) * ((avoidDistance - dist) / avoidDistance) * factor2;
-        ay2 -= (dy / dist) * ((avoidDistance - dist) / avoidDistance) * factor2;
-        // ax2 -= dx * factor2;
-        // ay2 -= dy * factor2;
+        // ax2 -= (dx / dist) * ((avoidDistance - dist) / avoidDistance) * factor2;
+        // ay2 -= (dy / dist) * ((avoidDistance - dist) / avoidDistance) * factor2;
+        ax2 -= dx * factor2;
+        ay2 -= dy * factor2;
       }
 
-      objects[i].vx += ax1 + ax2 + ax3;
-      objects[i].vy += ay1 + ay2 + ay3;
+      objects[i].ax = ax1 + ax2 + ax3;
+      objects[i].ay = ay1 + ay2 + ay3;
 
       var vnorm = normOfVector(objects[i].vx, objects[i].vy);
       if (vnorm > vlim) {
@@ -106,15 +115,11 @@ function main() {
         objects[i].vy = (objects[i].vy / vnorm) * vlim;
       }
 
-      if (objects[i].x < Xmin) objects[i].vx += 1;
-      else if (objects[i].x > Xmax) objects[i].vx -= 1;
-      else if (objects[i].y < Ymin) objects[i].vy += 1;
-      else if (objects[i].y > Ymax) objects[i].vy -= 1;
-    }
-  }
-
-  function updateBoidsPosition(dt) {
-    for (let i = 0; i < numObjects; i++) {
+      if (objects[i].x < Xmin) objects[i].ax = factor4;
+      else if (objects[i].x > Xmax) objects[i].ax = -factor4;
+      else if (objects[i].y < Ymin) objects[i].ay = factor4;
+      else if (objects[i].y > Ymax) objects[i].ay = -factor4;
+      
       objects[i].update(dt);
     }
   }
@@ -153,8 +158,10 @@ function main() {
   let prev = 0;
   updateBound();
   initBoids();
-  
+
   requestAnimationFrame(drawScene);
+  // webglLessonsUI.setupSlider("#x", {slide: updatePosition(0), max: gl.canvas.width });
+  // webglLessonsUI.setupSlider("#y", {slide: updatePosition(1), max: gl.canvas.height});
   function drawScene(curr) {
     curr *= 0.001;
     let timeDiff = curr - prev;
@@ -176,8 +183,10 @@ function main() {
 
       var rotation = [0, 1];
       var vel = normOfVector(objects[i].vx, objects[i].vy);
-      rotation[0] = objects[i].vx / vel;
-      rotation[1] = objects[i].vy / vel;
+      if (vel != 0) {
+        rotation[0] = objects[i].vx / vel;
+        rotation[1] = objects[i].vy / vel;
+      }
       gl.uniform2fv(rotationLocation, rotation);
 
       // Draw the rectangle.
@@ -188,8 +197,7 @@ function main() {
     }
 
     updateBound();
-    updateBoidsVelocity();
-    updateBoidsPosition(timeDiff);
+    updateBoidsVelocity(timeDiff);
     requestAnimationFrame(drawScene);
   }
 }
